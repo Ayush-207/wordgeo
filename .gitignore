@@ -1,0 +1,14 @@
+# Build pipeline artifacts (downloaded, never committed)
+glove/
+*.txt.gz
+
+# Dependencies and build output
+app/node_modules/
+app/dist/
+
+# Python
+scripts/__pycache__/
+.venv/
+
+# OS / editor
+.DS_Store
