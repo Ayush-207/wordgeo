@@ -12,3 +12,6 @@ scripts/__pycache__/
 
 # OS / editor
 .DS_Store
+
+# GloVe embeddings cache (downloaded by build, never committed)
+scripts/cache/

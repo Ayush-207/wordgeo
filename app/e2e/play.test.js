@@ -3,7 +3,7 @@
 
 import { chromium } from "playwright";
 
-const BASE = "http://localhost:4173";
+const BASE = "http://localhost:4173/wordgeo/";
 
 const results = [];
 function check(name, ok, detail = "") {
