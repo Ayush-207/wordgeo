@@ -22,12 +22,13 @@ export function parsePuzzle(buf: ArrayBuffer): Puzzle {
   }
   const view = new DataView(buf);
   const vocabSize = view.getUint32(4, true);
-  if (buf.byteLength !== 8 + vocabSize * 2) {
+  // header: magic(4) + vocabSize(4) + secretIndex(4), then uint16 ranks
+  if (buf.byteLength !== 12 + vocabSize * 2) {
     throw new Error(
-      `truncated puzzle: header says ${vocabSize} ranks, buffer holds ${(buf.byteLength - 8) / 2}`,
+      `truncated puzzle: header says ${vocabSize} ranks, buffer holds ${(buf.byteLength - 12) / 2}`,
     );
   }
-  const ranks = new Uint16Array(buf, 8, vocabSize);
+  const ranks = new Uint16Array(buf, 12, vocabSize);
   return { vocabSize, ranks };
 }
 

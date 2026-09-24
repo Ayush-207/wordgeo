@@ -1,20 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { createLookup, parsePuzzle } from "./puzzle";
 
-function makePuzzleBuf(vocabSize: number, ranks: number[]): ArrayBuffer {
-  const buf = new ArrayBuffer(8 + vocabSize * 2);
+function makePuzzleBuf(vocabSize: number, ranks: number[], secretIndex = 0): ArrayBuffer {
+  const buf = new ArrayBuffer(12 + vocabSize * 2);
   const bytes = new Uint8Array(buf, 0, 4);
   "WG01".split("").forEach((c, i) => (bytes[i] = c.charCodeAt(0)));
   const view = new DataView(buf);
   view.setUint32(4, vocabSize, true);
-  const u16 = new Uint16Array(buf, 8, vocabSize);
+  view.setUint32(8, secretIndex, true);
+  const u16 = new Uint16Array(buf, 12, vocabSize);
   ranks.forEach((r, i) => (u16[i] = r));
   return buf;
 }
 
 describe("parsePuzzle", () => {
   it("parses a valid puzzle", () => {
-    const buf = makePuzzleBuf(3, [1, 2, 3]);
+    const buf = makePuzzleBuf(3, [1, 2, 3], 1);
     const p = parsePuzzle(buf);
     expect(p.vocabSize).toBe(3);
     expect([...p.ranks]).toEqual([1, 2, 3]);
@@ -28,7 +29,7 @@ describe("parsePuzzle", () => {
 
   it("rejects a truncated body", () => {
     const buf = makePuzzleBuf(5, [1, 2, 3, 4, 5]);
-    const truncated = buf.slice(0, 8 + 3 * 2); // claims 5, has 3
+    const truncated = buf.slice(0, 12 + 3 * 2); // claims 5, has 3
     expect(() => parsePuzzle(truncated)).toThrow(/truncated/);
   });
 });
