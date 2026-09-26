@@ -83,6 +83,7 @@ body {
 
 .guess-form {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 1.5rem;
 }
@@ -112,9 +113,24 @@ body {
   cursor: pointer;
 }
 
+.guess-form button.secondary {
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+
 .guess-form button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.hint-badge {
+  margin-right: 0.4rem;
+  font-size: 0.9rem;
+}
+
+.solved.gave-up h2 {
+  color: var(--muted);
 }
 
 .message {
