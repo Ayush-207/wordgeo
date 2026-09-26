@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { dailyPuzzleId, practicePuzzleId } from "./game/modes";
-import { loadRecentPractice, saveRecentPractice } from "./game/storage";
+import {
+  loadActivePractice,
+  loadRecentPractice,
+  saveActivePractice,
+  saveRecentPractice,
+} from "./game/storage";
 import { useGame } from "./game/useGame";
 import { buildShareText } from "./game/share";
 import GuessList from "./components/GuessList";
@@ -9,18 +14,25 @@ import GuessInput from "./components/GuessInput";
 type Mode = "daily" | "practice";
 
 export default function App() {
-  const [mode, setMode] = useState<Mode>("daily");
-  const [practiceId, setPracticeId] = useState<number | null>(null);
+  // resume an in-progress practice puzzle after a reload
+  const resumed = loadActivePractice();
+  const [mode, setMode] = useState<Mode>(resumed !== null ? "practice" : "daily");
+  const [practiceId, setPracticeId] = useState<number | null>(resumed);
 
-  const puzzleId =
-    mode === "daily" ? dailyPuzzleId() : practiceId;
+  const puzzleId = mode === "daily" ? dailyPuzzleId() : practiceId;
 
   function startPractice() {
     const recent = loadRecentPractice();
     const id = practicePuzzleId(recent);
     saveRecentPractice([id, ...recent]);
+    saveActivePractice(id);
     setPracticeId(id);
     setMode("practice");
+  }
+
+  function goDaily() {
+    saveActivePractice(null);
+    setMode("daily");
   }
 
   const game = useGame(puzzleId);
@@ -33,7 +45,7 @@ export default function App() {
         <nav className="modes">
           <button
             className={mode === "daily" ? "active" : ""}
-            onClick={() => setMode("daily")}
+            onClick={goDaily}
           >
             daily
           </button>
@@ -62,7 +74,30 @@ export default function App() {
               </p>
               <button
                 className="share"
-                onClick={() => navigator.clipboard?.writeText(buildShareText(puzzleId ?? 0, game.state))}
+                onClick={() =>
+                  navigator.clipboard?.writeText(buildShareText(puzzleId ?? 0, game.state))
+                }
+              >
+                copy result
+              </button>
+              {mode === "practice" && (
+                <button className="share" onClick={startPractice}>
+                  new puzzle
+                </button>
+              )}
+            </section>
+          ) : game.state.gaveUp ? (
+            <section className="solved gave-up">
+              <h2>the word was revealed</h2>
+              <p>
+                you gave up after {game.state.guesses.length} guess
+                {game.state.guesses.length === 1 ? "" : "es"}
+              </p>
+              <button
+                className="share"
+                onClick={() =>
+                  navigator.clipboard?.writeText(buildShareText(puzzleId ?? 0, game.state))
+                }
               >
                 copy result
               </button>
@@ -73,7 +108,11 @@ export default function App() {
               )}
             </section>
           ) : (
-            <GuessInput onSubmit={game.submitGuess} />
+            <GuessInput
+              onSubmit={game.submitGuess}
+              onRequestHint={game.requestHint}
+              onGiveUp={game.giveUp}
+            />
           )}
           <GuessList guesses={game.sortedGuesses} />
         </>

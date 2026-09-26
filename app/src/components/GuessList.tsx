@@ -21,7 +21,10 @@ export default function GuessList({ guesses }: { guesses: GuessEntry[] }) {
             className="guess"
             style={{ borderLeftColor: `rgba(224, 122, 95, ${0.15 + 0.85 * h})` }}
           >
-            <span className="word">{g.word}</span>
+            <span className="word">
+              {g.hint && <span className="hint-badge" title="revealed by hint">💡</span>}
+              {g.word}
+            </span>
             <span className="rank" data-hot={h > 0.66}>
               #{g.rank.toLocaleString()}
             </span>

@@ -28,7 +28,7 @@ check("guess input visible", true);
 
 // 3. make a guess — "ocean" for the daily puzzle; expect it to appear with a rank
 await input.fill("ocean");
-await page.locator(".guess-form button").click();
+await page.locator(".guess-form button", { hasText: "guess" }).click();
 await page.locator(".guess:has-text('ocean')").waitFor({ timeout: 5000 });
 const oceanRank = await page.textContent(".guess:has-text('ocean') .rank");
 check("ocean ranked", /^#\d[\d,]*$/.test(oceanRank.trim()), oceanRank.trim());
@@ -36,7 +36,7 @@ check("ocean ranked", /^#\d[\d,]*$/.test(oceanRank.trim()), oceanRank.trim());
 // 4. unknown word shows a message, no new guess row
 const guessCount = await page.locator(".guess").count();
 await input.fill("asdfghjkl");
-await page.locator(".guess-form button").click();
+await page.locator(".guess-form button", { hasText: "guess" }).click();
 await page.waitForTimeout(300);
 check(
   "unknown word rejected",
@@ -46,7 +46,7 @@ check(
 
 // 5. duplicate guess rejected
 await input.fill("ocean");
-await page.locator(".guess-form button").click();
+await page.locator(".guess-form button", { hasText: "guess" }).click();
 await page.waitForTimeout(300);
 check(
   "duplicate rejected",
@@ -69,7 +69,7 @@ const secret = vocab[secretIndex];
 console.log(`  (daily #${puzzleId}, secret = ${secret})`);
 
 await input.fill(secret);
-await page.locator(".guess-form button").click();
+await page.locator(".guess-form button", { hasText: "guess" }).click();
 await page.locator(".solved").waitFor({ timeout: 5000 });
 check("solved panel appears", true);
 check(
@@ -93,9 +93,44 @@ check("solved state persists across reload", true);
 await page.locator(".modes button", { hasText: "practice" }).click();
 await page.locator(".guess-form input").waitFor({ state: "visible", timeout: 5000 });
 await input2(page).fill("river");
-await page.locator(".guess-form button").click();
+await page.locator(".guess-form button", { hasText: "guess" }).click();
 await page.locator(".guess:has-text('river')").waitFor({ timeout: 5000 });
 check("practice mode playable", true);
+
+// 10. hint: reveals a word with the 💡 badge, better than nothing guessed yet
+const guessCountBefore = await page.locator(".guess").count();
+await page.locator(".guess-form button", { hasText: "hint" }).click();
+await page.locator(".guess .hint-badge").first().waitFor({ timeout: 5000 });
+check(
+  "hint reveals a 💡-badged word",
+  (await page.locator(".guess").count()) === guessCountBefore + 1,
+);
+
+// 11. hint again: the new hint should be closer than the previous best
+const ranksBefore = await page.$$eval(".guess .rank", (els) =>
+  els.map((e) => parseInt(e.textContent.replace(/[^0-9]/g, ""), 10)),
+);
+const bestBefore = Math.min(...ranksBefore);
+await page.locator(".guess-form button", { hasText: "hint" }).click();
+await page.waitForTimeout(300);
+const ranksAfter = await page.$$eval(".guess .rank", (els) =>
+  els.map((e) => parseInt(e.textContent.replace(/[^0-9]/g, ""), 10)),
+);
+const bestAfter = Math.min(...ranksAfter);
+check("second hint is closer", bestAfter < bestBefore, `${bestBefore} -> ${bestAfter}`);
+
+// 12. give up (two clicks: confirm flow)
+await page.locator(".guess-form button", { hasText: "give up" }).click();
+await page.locator(".guess-form button", { hasText: "reveal answer?" }).click();
+await page.locator(".solved.gave-up").waitFor({ timeout: 5000 });
+check("give up reveals the answer panel", true);
+const gaveUpText = await page.textContent(".solved.gave-up p");
+check("gave-up panel counts guesses", gaveUpText.includes("gave up after"), gaveUpText.trim());
+
+// 13. gave-up state persists across reload
+await page.reload({ waitUntil: "networkidle" });
+await page.locator(".solved.gave-up").waitFor({ timeout: 5000 });
+check("gave-up state persists", true);
 
 function input2(p) {
   return p.locator(".guess-form input");
