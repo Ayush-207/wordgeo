@@ -2,8 +2,10 @@
 """wordgeo build pipeline.
 
 Steps:
-  1. load GloVe 300d embeddings from cache (zip or extracted txt)
-  2. build the vocabulary: top-N frequent, lowercase alphabetic, deduplicated
+  1. load Model2Vec potion-base-32M token embeddings (distilled from a
+     contrastive teacher; similarity tracks meaning better than GloVe)
+  2. build the vocabulary: words present in the model tokenizer, lowercase
+     alphabetic, deduplicated
   3. load the curated secret-word list (secrets.txt, exactly 200 words)
   4. normalize vectors, compute S @ V.T, argsort each row -> rank tables
   5. write data/vocab.json and data/puzzles/puzzle-<id>.bin (uint16 ranks)
@@ -13,21 +15,21 @@ Validates loudly: every secret must be in vocab, ranks must be a permutation.
 
 import json
 import sys
-import zipfile
 from pathlib import Path
 
 import numpy as np
+from model2vec import StaticModel
 
 HERE = Path(__file__).parent
 ROOT = HERE.parent
 CACHE = HERE / "cache"
 DATA = ROOT / "data"
 PUZZLES_DIR = DATA / "puzzles"
-GLOVE_ZIP = CACHE / "glove.6B.zip"
-GLOVE_300D = "glove.6B.300d.txt"
+MODEL_NAME = "minishlab/potion-base-32M"
 
-VOCAB_SIZE = 50_000
-EMBED_DIM = 300
+VOCAB_SIZE = 39_210  # potion-base-32M tokenizer words passing the filter; see load_embeddings
+
+EMBED_DIM = 512
 
 VOCAB_OUT = DATA / "vocab.json"
 SECRETS_FILE = HERE / "secrets.txt"
@@ -45,46 +47,29 @@ def fail(msg: str) -> None:
     sys.exit(1)
 
 
-def load_embeddings() -> dict[str, np.ndarray]:
-    """Load word -> vector from the GloVe zip, preferring the 300d file."""
-    if not GLOVE_ZIP.exists():
-        fail(f"GloVe zip not found at {GLOVE_ZIP}. Download it first:\n"
-             "  curl -sL -o scripts/cache/glove.6B.zip http://nlp.stanford.edu/data/glove.6B.zip")
-    vectors: dict[str, np.ndarray] = {}
-    with zipfile.ZipFile(GLOVE_ZIP) as zf:
-        try:
-            name = zf.getinfo(GLOVE_300D)
-        except KeyError:
-            fail(f"{GLOVE_300D} not inside the zip; contains: {zf.namelist()}")
-        with zf.open(name) as fh:
-            for raw in fh:
-                parts = raw.decode("utf-8").rstrip().split(" ")
-                word = parts[0]
-                # GloVe ordering is by frequency; first occurrence wins.
-                if word in vectors:
-                    continue
-                vec = np.asarray(parts[1:], dtype=np.float32)
-                if vec.shape[0] != EMBED_DIM:
-                    continue
-                vectors[word] = vec
-    print(f"loaded {len(vectors):,} embeddings")
-    return vectors
+def load_embeddings() -> tuple[list[str], np.ndarray]:
+    """Load potion-base-32M and return (vocab, matrix).
 
+    The vocab is the set of model tokenizer words that pass the plain-lowercase
+    filter, ordered by tokenizer id (roughly frequency order — the distilled
+    vocab was itself built from a frequency-ordered source).
+    """
+    model = StaticModel.from_pretrained(MODEL_NAME)
+    tok_vocab = model.tokenizer.get_vocab()
+    emb = model.embedding
 
-def build_vocab(vectors: dict[str, np.ndarray]) -> list[str]:
-    """Top-N by GloVe frequency order, filtered to plain lowercase alphabetic."""
-    vocab = []
-    for word in vectors:  # dict preserves GloVe file order = frequency order
-        if len(vocab) >= VOCAB_SIZE:
-            break
-        if word.isascii() and word.isalpha() and word.islower():
-            vocab.append(word)
-    if len(vocab) < VOCAB_SIZE:
-        fail(f"vocab too small: {len(vocab)} (wanted {VOCAB_SIZE})")
-    # validation: no duplicates possible via dict, but assert anyway
-    assert len(set(vocab)) == len(vocab)
-    print(f"vocab: {len(vocab):,} words")
-    return vocab
+    words = [w for w in tok_vocab
+             if w.isascii() and w.isalpha() and w.islower()]
+    words.sort(key=tok_vocab.get)  # tokenizer id order
+
+    if len(words) < VOCAB_SIZE:
+        fail(f"model tokenizer yielded only {len(words)} filtered words "
+             f"(wanted {VOCAB_SIZE})")
+    words = words[:VOCAB_SIZE]
+
+    mat = np.stack([emb[tok_vocab[w]] for w in words]).astype(np.float64)
+    print(f"loaded {MODEL_NAME}: {len(words):,} vocab words, {mat.shape[1]} dims")
+    return words, mat
 
 
 def load_secrets(vocab: list[str]) -> list[str]:
@@ -107,10 +92,11 @@ def load_secrets(vocab: list[str]) -> list[str]:
     return secrets
 
 
-def compute_ranks(vectors: dict[str, np.ndarray], vocab: list[str], secrets: list[str]) -> np.ndarray:
+def compute_ranks(mat: np.ndarray, vocab: list[str], secrets: list[str]) -> np.ndarray:
     """Return ranks[secret_i, vocab_j] = 1-based rank of vocab word j for secret i."""
-    V = np.stack([vectors[w] for w in vocab])          # (VOCAB_SIZE, 300)
-    S = np.stack([vectors[w] for w in secrets])        # (200, 300)
+    vocab_idx = {w: i for i, w in enumerate(vocab)}
+    V = mat                                            # (VOCAB_SIZE, DIM)
+    S = np.stack([mat[vocab_idx[w]] for w in secrets])  # (200, DIM)
 
     # normalize rows to unit length -> dot product == cosine similarity
     V /= np.linalg.norm(V, axis=1, keepdims=True)
@@ -156,10 +142,9 @@ def write_outputs(vocab: list[str], secrets: list[str], ranks: np.ndarray) -> No
 
 
 def main() -> None:
-    vectors = load_embeddings()
-    vocab = build_vocab(vectors)
+    vocab, mat = load_embeddings()
     secrets = load_secrets(vocab)
-    ranks = compute_ranks(vectors, vocab, secrets)
+    ranks = compute_ranks(mat, vocab, secrets)
     validate_ranks(ranks, secrets, vocab)
     write_outputs(vocab, secrets, ranks)
     print("build complete")
