@@ -8,6 +8,7 @@ import {
 } from "./game/storage";
 import { useGame } from "./game/useGame";
 import { buildShareText } from "./game/share";
+import { trackEvent } from "./analytics";
 import GuessList from "./components/GuessList";
 import GuessInput from "./components/GuessInput";
 
@@ -36,6 +37,30 @@ export default function App() {
   }
 
   const game = useGame(puzzleId);
+
+  const submitGuess: typeof game.submitGuess = (word) => {
+    const firstGuess = game.state.guesses.length === 0;
+    const result = game.submitGuess(word);
+    if ((result === "ranked" || result === "solved") && firstGuess) trackEvent(`start-${mode}`);
+    if (result === "solved") trackEvent(`solve-${mode}`);
+    return result;
+  };
+
+  const requestHint: typeof game.requestHint = () => {
+    const result = game.requestHint();
+    if (result === "hint") trackEvent("hint");
+    return result;
+  };
+
+  const giveUp = () => {
+    game.giveUp();
+    trackEvent(`give-up-${mode}`);
+  };
+
+  function copyResult() {
+    navigator.clipboard?.writeText(buildShareText(puzzleId ?? 0, game.state));
+    trackEvent("copy-result");
+  }
 
   return (
     <main className="app">
@@ -77,9 +102,7 @@ export default function App() {
               </p>
               <button
                 className="share"
-                onClick={() =>
-                  navigator.clipboard?.writeText(buildShareText(puzzleId ?? 0, game.state))
-                }
+                onClick={copyResult}
               >
                 copy result
               </button>
@@ -98,9 +121,7 @@ export default function App() {
               </p>
               <button
                 className="share"
-                onClick={() =>
-                  navigator.clipboard?.writeText(buildShareText(puzzleId ?? 0, game.state))
-                }
+                onClick={copyResult}
               >
                 copy result
               </button>
@@ -112,9 +133,9 @@ export default function App() {
             </section>
           ) : (
             <GuessInput
-              onSubmit={game.submitGuess}
-              onRequestHint={game.requestHint}
-              onGiveUp={game.giveUp}
+              onSubmit={submitGuess}
+              onRequestHint={requestHint}
+              onGiveUp={giveUp}
             />
           )}
           <GuessList guesses={game.sortedGuesses} />

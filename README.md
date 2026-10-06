@@ -102,6 +102,12 @@ node e2e/play.test.js   # e2e playtest against the preview server on :4173
 
 `app/public/data` is a symlink to `../../data`. In CI, the workflow copies `data/` into `dist/` instead.
 
+## Analytics
+
+Visits and gameplay are counted with [GoatCounter](https://www.goatcounter.com/), which uses no cookies and stores no personal data. Page views are counted automatically. The game also sends anonymous events: `start-*` (first guess), `solve-*`, `give-up-*` (each for `daily` or `practice`), `hint` and `copy-result`.
+
+Everything lives in `app/src/analytics.ts` and does nothing until `GOATCOUNTER_CODE` is set. GoatCounter ignores localhost, so dev and e2e runs are never counted.
+
 ## Deployment
 
 Every push to `main` runs the GitHub Actions workflow, which tests, builds, and publishes to GitHub Pages. The Vite `base` defaults to `/wordgeo/` and can be overridden with `VITE_BASE`.

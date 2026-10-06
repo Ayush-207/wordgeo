@@ -13,6 +13,17 @@ function check(name, ok, detail = "") {
 
 const browser = await chromium.launch();
 const context = await browser.newContext({ permissions: ["clipboard-read", "clipboard-write"] });
+// stand-in for GoatCounter: block the real script, record events instead of sending them
+await context.route("**/gc.zgo.at/**", (route) => route.abort());
+await context.addInitScript(() => {
+  window.__events = JSON.parse(sessionStorage.getItem("__events") || "[]");
+  window.goatcounter = {
+    count: ({ path }) => {
+      window.__events.push(path);
+      sessionStorage.setItem("__events", JSON.stringify(window.__events));
+    },
+  };
+});
 const page = await context.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
@@ -133,6 +144,17 @@ check("gave-up panel counts guesses", gaveUpText.includes("gave up after"), gave
 await page.reload({ waitUntil: "networkidle" });
 await page.locator(".solved.gave-up").waitFor({ timeout: 5000 });
 check("gave-up state persists", true);
+
+// 14. analytics: script tag injected for the right site, events fired (recorded across reloads)
+const gcEndpoint = await page.getAttribute("script[data-goatcounter]", "data-goatcounter");
+check("analytics script injected", gcEndpoint === "https://wordgeo.goatcounter.com/count", gcEndpoint);
+const events = await page.evaluate(() => window.__events);
+const expected = ["start-daily", "solve-daily", "copy-result", "start-practice", "hint", "give-up-practice"];
+check(
+  "analytics events fired",
+  expected.every((e) => events.includes(e)) && events.filter((e) => e === "solve-daily").length === 1,
+  events.join(", "),
+);
 
 function input2(p) {
   return p.locator(".guess-form input");
