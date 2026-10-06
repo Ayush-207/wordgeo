@@ -16,9 +16,18 @@ There's a secret word. Every guess gets a **rank**: 1 is the secret word itself,
 
 Rankings are computed offline and shipped as static files. The browser never runs a model, and there is no backend.
 
-- **Embeddings:** [Model2Vec `potion-base-32M`](https://huggingface.co/minishlab/potion-base-32M), static 512-dimensional embeddings distilled from a sentence transformer. Similarity reflects meaning rather than co-occurrence in news text (`bush` → shrub, not clinton).
-- **Vocabulary:** 39,210 words, which are all the plain lowercase words in the model's tokenizer
-- **Puzzles:** 200 curated secret words (`scripts/secrets.txt`). For each one, the build computes the cosine similarity against the whole vocabulary, sorts it, and writes one rank table.
+- **Embeddings:** an ensemble of two models. [Model2Vec `potion-base-32M`](https://huggingface.co/minishlab/potion-base-32M) (512 dims, distilled from a sentence transformer) and [GloVe 6B 300d](https://nlp.stanford.edu/projects/glove/) (co-occurrence). Each model's cosines are z-scored against its own random-pair noise floor, then averaged.
+- **Why both:** on human similarity ratings, the ensemble beats either model on relatedness, which is what the game rewards:
+
+  | benchmark (Spearman ρ) | GloVe | Model2Vec | ensemble |
+  |---|---|---|---|
+  | MEN-3000 (relatedness) | 0.738 | 0.770 | **0.842** |
+  | WS-353 relatedness | 0.573 | 0.694 | **0.754** |
+  | SimLex-999 (strict similarity) | 0.373 | **0.658** | 0.599 |
+
+  Reproduce with `scripts/benchmark.py`.
+- **Vocabulary:** 39,210 words, which are all the plain lowercase words in the Model2Vec tokenizer
+- **Puzzles:** 200 curated secret words (`scripts/secrets.txt`). For each one, the build scores the whole vocabulary with the ensemble, sorts it, and writes one rank table.
 - **Daily id:** `days since LAUNCH_DATE % 200` (`app/src/game/modes.ts`)
 
 ### Puzzle file format
@@ -43,6 +52,7 @@ The answers can be read from the shipped files: every puzzle file contains `secr
 ```
 scripts/
   build.py              embeddings → vocab + 200 rank tables (validates every row is a permutation, secret = #1)
+  benchmark.py          scores GloVe / Model2Vec / ensemble against SimLex, WordSim-353 and MEN
   secrets.txt           the 200 secret words
   compare_model2vec.py  harness for comparing top-10 neighbours between GloVe and Model2Vec
 data/                   vocab.json + puzzles/*.bin (committed build artifacts)
@@ -60,13 +70,12 @@ app/
 ```bash
 cd scripts
 uv venv .venv && uv pip install --python .venv/bin/python numpy==2.5.3 model2vec==0.9.0
-.venv/bin/python build.py   # downloads potion-base-32M (~130 MB) from Hugging Face on first run
+curl -L -o cache/glove.6B.zip https://nlp.stanford.edu/data/glove.6B.zip   # 822 MB, gitignored
+.venv/bin/python build.py       # downloads potion-base-32M (~130 MB) from Hugging Face on first run
+.venv/bin/python benchmark.py   # optional: word-similarity benchmark
 ```
 
 `build.py` rewrites `data/`, so commit the result. Changing the model or `secrets.txt` changes every rank, and saved games will then mix the old and new rankings. Do it deliberately.
-
-`compare_model2vec.py` also needs the GloVe 6B zip in `scripts/cache/` (822 MB, gitignored):
-`curl -L -o scripts/cache/glove.6B.zip https://nlp.stanford.edu/data/glove.6B.zip`
 
 ### Frontend
 

@@ -2,19 +2,27 @@
 """wordgeo build pipeline.
 
 Steps:
-  1. load Model2Vec potion-base-32M token embeddings (distilled from a
-     contrastive teacher; similarity tracks meaning better than GloVe)
-  2. build the vocabulary: words present in the model tokenizer, lowercase
-     alphabetic, deduplicated
+  1. build the vocabulary from the Model2Vec potion-base-32M tokenizer:
+     whole lowercase alphabetic words, in tokenizer id order
+  2. load two embedding models over that vocabulary:
+       - Model2Vec potion-base-32M (distilled from a sentence transformer)
+       - GloVe 6B 300d (co-occurrence)
   3. load the curated secret-word list (secrets.txt, exactly 200 words)
-  4. normalize vectors, compute S @ V.T, argsort each row -> rank tables
+  4. score each secret against the vocab with BOTH models, z-score each
+     model's cosines against its own random-pair noise floor, average them,
+     argsort each row -> rank tables
   5. write data/vocab.json and data/puzzles/puzzle-<id>.bin (uint16 ranks)
+
+Why an ensemble: on human similarity benchmarks the average beats either model
+alone on relatedness (MEN-3000 Spearman 0.84 vs 0.77 M2V / 0.75 GloVe), which
+is what a Contexto-style game rewards. See benchmark.py.
 
 Validates loudly: every secret must be in vocab, ranks must be a permutation.
 """
 
 import json
 import sys
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -25,11 +33,16 @@ ROOT = HERE.parent
 CACHE = HERE / "cache"
 DATA = ROOT / "data"
 PUZZLES_DIR = DATA / "puzzles"
-MODEL_NAME = "minishlab/potion-base-32M"
+M2V_MODEL = "minishlab/potion-base-32M"
+GLOVE_ZIP = CACHE / "glove.6B.zip"
+GLOVE_300D = "glove.6B.300d.txt"
+GLOVE_DIM = 300
 
-VOCAB_SIZE = 39_210  # potion-base-32M tokenizer words passing the filter; see load_embeddings
+VOCAB_SIZE = 39_210  # potion-base-32M tokenizer words passing the filter; see load_model2vec
 
-EMBED_DIM = 512
+# random word pairs sampled to estimate each model's cosine noise floor
+NOISE_PAIRS = 50_000
+NOISE_SEED = 0
 
 VOCAB_OUT = DATA / "vocab.json"
 SECRETS_FILE = HERE / "secrets.txt"
@@ -47,16 +60,18 @@ def fail(msg: str) -> None:
     sys.exit(1)
 
 
-def load_embeddings() -> tuple[list[str], np.ndarray]:
-    """Load potion-base-32M and return (vocab, matrix).
+def unit_rows(mat: np.ndarray) -> np.ndarray:
+    return mat / np.linalg.norm(mat, axis=1, keepdims=True)
+
+
+def load_model2vec() -> tuple[list[str], np.ndarray]:
+    """Load potion-base-32M and return (vocab, unit-normalized matrix).
 
     The vocab is the set of model tokenizer words that pass the plain-lowercase
-    filter, ordered by tokenizer id (roughly frequency order — the distilled
-    vocab was itself built from a frequency-ordered source).
+    filter, ordered by tokenizer id (roughly frequency order).
     """
-    model = StaticModel.from_pretrained(MODEL_NAME)
+    model = StaticModel.from_pretrained(M2V_MODEL)
     tok_vocab = model.tokenizer.get_vocab()
-    emb = model.embedding
 
     words = [w for w in tok_vocab
              if w.isascii() and w.isalpha() and w.islower()]
@@ -67,9 +82,46 @@ def load_embeddings() -> tuple[list[str], np.ndarray]:
              f"(wanted {VOCAB_SIZE})")
     words = words[:VOCAB_SIZE]
 
-    mat = np.stack([emb[tok_vocab[w]] for w in words]).astype(np.float64)
-    print(f"loaded {MODEL_NAME}: {len(words):,} vocab words, {mat.shape[1]} dims")
-    return words, mat
+    mat = np.stack([model.embedding[tok_vocab[w]] for w in words]).astype(np.float64)
+    print(f"loaded {M2V_MODEL}: {len(words):,} vocab words, {mat.shape[1]} dims")
+    return words, unit_rows(mat)
+
+
+def load_glove(vocab: list[str]) -> tuple[np.ndarray, np.ndarray]:
+    """Return (unit-normalized matrix aligned to vocab, has-vector mask).
+
+    Scans the full 400k GloVe file; vocab words GloVe lacks get a zero row and
+    mask False, and are scored by Model2Vec alone.
+    """
+    if not GLOVE_ZIP.exists():
+        fail(f"GloVe zip not found at {GLOVE_ZIP}. Download it first:\n"
+             "  curl -L -o scripts/cache/glove.6B.zip https://nlp.stanford.edu/data/glove.6B.zip")
+    index = {w: i for i, w in enumerate(vocab)}
+    mat = np.zeros((len(vocab), GLOVE_DIM))
+    has = np.zeros(len(vocab), dtype=bool)
+    with zipfile.ZipFile(GLOVE_ZIP) as zf, zf.open(GLOVE_300D) as fh:
+        for raw in fh:
+            word, _, rest = raw.decode("utf-8").rstrip().partition(" ")
+            i = index.get(word)
+            if i is None or has[i]:
+                continue
+            vec = np.asarray(rest.split(" "), dtype=np.float64)
+            if vec.shape[0] != GLOVE_DIM:
+                continue
+            mat[i] = vec
+            has[i] = True
+    mat[has] = unit_rows(mat[has])
+    print(f"loaded GloVe 6B {GLOVE_DIM}d: {has.sum():,}/{len(vocab):,} vocab words covered")
+    return mat, has
+
+
+def noise_floor(mat: np.ndarray, mask: np.ndarray) -> tuple[float, float]:
+    """Mean and std of cosine between random pairs of covered words."""
+    rng = np.random.default_rng(NOISE_SEED)
+    rows = np.flatnonzero(mask)
+    pairs = rng.choice(rows, size=(NOISE_PAIRS, 2))
+    cos = (mat[pairs[:, 0]] * mat[pairs[:, 1]]).sum(axis=1)
+    return float(cos.mean()), float(cos.std())
 
 
 def load_secrets(vocab: list[str]) -> list[str]:
@@ -92,18 +144,32 @@ def load_secrets(vocab: list[str]) -> list[str]:
     return secrets
 
 
-def compute_ranks(mat: np.ndarray, vocab: list[str], secrets: list[str]) -> np.ndarray:
-    """Return ranks[secret_i, vocab_j] = 1-based rank of vocab word j for secret i."""
+def ensemble_scores(m2v: np.ndarray, glove: np.ndarray, has_glove: np.ndarray,
+                    vocab: list[str], secrets: list[str]) -> np.ndarray:
+    """scores[secret_i, vocab_j] = mean of the two models' z-scored cosines.
+
+    Each model's cosines are standardized against its own random-pair noise
+    floor, so neither model dominates just by having a wider cosine spread.
+    Pairs GloVe can't score fall back to the Model2Vec z-score alone.
+    """
     vocab_idx = {w: i for i, w in enumerate(vocab)}
-    V = mat                                            # (VOCAB_SIZE, DIM)
-    S = np.stack([mat[vocab_idx[w]] for w in secrets])  # (200, DIM)
+    rows = [vocab_idx[w] for w in secrets]
+    missing = [w for w in secrets if not has_glove[vocab_idx[w]]]
+    if missing:
+        fail(f"secrets missing from GloVe: {missing}")
 
-    # normalize rows to unit length -> dot product == cosine similarity
-    V /= np.linalg.norm(V, axis=1, keepdims=True)
-    S /= np.linalg.norm(S, axis=1, keepdims=True)
+    m_mu, m_sd = noise_floor(m2v, np.ones(len(vocab), dtype=bool))
+    g_mu, g_sd = noise_floor(glove, has_glove)
+    print(f"noise floor: Model2Vec {m_mu:+.3f} ± {m_sd:.3f}, GloVe {g_mu:+.3f} ± {g_sd:.3f}")
 
-    sims = S @ V.T                                      # (200, VOCAB_SIZE)
-    order = np.argsort(-sims, axis=1)                   # vocab indices, best first
+    z_m = (m2v[rows] @ m2v.T - m_mu) / m_sd            # (200, VOCAB_SIZE)
+    z_g = (glove[rows] @ glove.T - g_mu) / g_sd
+    return np.where(has_glove[None, :], (z_m + z_g) / 2, z_m)
+
+
+def compute_ranks(scores: np.ndarray) -> np.ndarray:
+    """Return ranks[secret_i, vocab_j] = 1-based rank of vocab word j for secret i."""
+    order = np.argsort(-scores, axis=1)                 # vocab indices, best first
     ranks = np.empty_like(order, dtype=np.uint16)
     rows = np.arange(order.shape[0])[:, None]
     cols = np.arange(order.shape[1])[None, :]
@@ -142,9 +208,11 @@ def write_outputs(vocab: list[str], secrets: list[str], ranks: np.ndarray) -> No
 
 
 def main() -> None:
-    vocab, mat = load_embeddings()
+    vocab, m2v = load_model2vec()
+    glove, has_glove = load_glove(vocab)
     secrets = load_secrets(vocab)
-    ranks = compute_ranks(mat, vocab, secrets)
+    scores = ensemble_scores(m2v, glove, has_glove, vocab, secrets)
+    ranks = compute_ranks(scores)
     validate_ranks(ranks, secrets, vocab)
     write_outputs(vocab, secrets, ranks)
     print("build complete")
