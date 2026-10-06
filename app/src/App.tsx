@@ -3,14 +3,17 @@ import { dailyPuzzleId, practicePuzzleId } from "./game/modes";
 import {
   loadActivePractice,
   loadRecentPractice,
+  loadSeenHowToPlay,
   saveActivePractice,
   saveRecentPractice,
+  saveSeenHowToPlay,
 } from "./game/storage";
 import { useGame } from "./game/useGame";
 import { buildShareText } from "./game/share";
 import { trackEvent } from "./analytics";
 import GuessList from "./components/GuessList";
 import GuessInput from "./components/GuessInput";
+import HowToPlay from "./components/HowToPlay";
 
 type Mode = "daily" | "practice";
 
@@ -19,6 +22,13 @@ export default function App() {
   const resumed = loadActivePractice();
   const [mode, setMode] = useState<Mode>(resumed !== null ? "practice" : "daily");
   const [practiceId, setPracticeId] = useState<number | null>(resumed);
+  // rules open automatically on a first visit, then only via the ? button
+  const [showHelp, setShowHelp] = useState(() => !loadSeenHowToPlay());
+
+  function closeHelp() {
+    saveSeenHowToPlay();
+    setShowHelp(false);
+  }
 
   const puzzleId = mode === "daily" ? dailyPuzzleId() : practiceId;
 
@@ -64,7 +74,16 @@ export default function App() {
 
   return (
     <main className="app">
+      <HowToPlay open={showHelp} onClose={closeHelp} />
       <header className="header">
+        <button
+          className="help-button"
+          aria-label="how to play"
+          title="how to play"
+          onClick={() => setShowHelp(true)}
+        >
+          ?
+        </button>
         <h1>wordgeo</h1>
         <p className="tagline">guess the word — every guess tells you its rank</p>
         <nav className="modes">

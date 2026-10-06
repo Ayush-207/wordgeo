@@ -32,6 +32,18 @@ page.on("pageerror", (e) => errors.push(String(e)));
 await page.goto(BASE, { waitUntil: "networkidle" });
 check("app renders title", (await page.textContent("h1")) === "wordgeo");
 
+// 1b. how-to-play: opens on first visit, closes, reopens via ?, Escape closes, stays closed on reload
+const help = page.locator("dialog.how-to-play");
+check("how-to-play opens on first visit", await help.isVisible());
+await help.locator("button", { hasText: "got it" }).click();
+check("how-to-play closes", !(await help.isVisible()));
+await page.locator(".help-button").click();
+check("? reopens how-to-play", await help.isVisible());
+await page.keyboard.press("Escape");
+check("Escape closes how-to-play", !(await help.isVisible()));
+await page.reload({ waitUntil: "networkidle" });
+check("how-to-play stays closed after first visit", !(await help.isVisible()));
+
 // 2. input present, waiting for guesses
 const input = page.locator(".guess-form input");
 await input.waitFor({ state: "visible", timeout: 5000 });
@@ -40,18 +52,18 @@ check("guess input visible", true);
 // 3. make a guess — "ocean" for the daily puzzle; expect it to appear with a rank
 await input.fill("ocean");
 await page.locator(".guess-form button", { hasText: "guess" }).click();
-await page.locator(".guess:has-text('ocean')").waitFor({ timeout: 5000 });
-const oceanRank = await page.textContent(".guess:has-text('ocean') .rank");
+await page.locator(".app > .guess-list .guess:has-text('ocean')").waitFor({ timeout: 5000 });
+const oceanRank = await page.textContent(".app > .guess-list .guess:has-text('ocean') .rank");
 check("ocean ranked", /^#\d[\d,]*$/.test(oceanRank.trim()), oceanRank.trim());
 
 // 4. unknown word shows a message, no new guess row
-const guessCount = await page.locator(".guess").count();
+const guessCount = await page.locator(".app > .guess-list .guess").count();
 await input.fill("asdfghjkl");
 await page.locator(".guess-form button", { hasText: "guess" }).click();
 await page.waitForTimeout(300);
 check(
   "unknown word rejected",
-  (await page.locator(".guess").count()) === guessCount &&
+  (await page.locator(".app > .guess-list .guess").count()) === guessCount &&
     (await page.textContent(".message")).includes("not in my vocabulary"),
 );
 
@@ -61,7 +73,7 @@ await page.locator(".guess-form button", { hasText: "guess" }).click();
 await page.waitForTimeout(300);
 check(
   "duplicate rejected",
-  (await page.locator(".guess").count()) === guessCount &&
+  (await page.locator(".app > .guess-list .guess").count()) === guessCount &&
     (await page.textContent(".message")).includes("already guessed"),
 );
 
@@ -107,26 +119,26 @@ await page.locator(".modes button", { hasText: "practice" }).click();
 await page.locator(".guess-form input").waitFor({ state: "visible", timeout: 5000 });
 await input2(page).fill("river");
 await page.locator(".guess-form button", { hasText: "guess" }).click();
-await page.locator(".guess:has-text('river')").waitFor({ timeout: 5000 });
+await page.locator(".app > .guess-list .guess:has-text('river')").waitFor({ timeout: 5000 });
 check("practice mode playable", true);
 
 // 10. hint: reveals a word with the 💡 badge, better than nothing guessed yet
-const guessCountBefore = await page.locator(".guess").count();
+const guessCountBefore = await page.locator(".app > .guess-list .guess").count();
 await page.locator(".guess-form button", { hasText: "hint" }).click();
-await page.locator(".guess .hint-badge").first().waitFor({ timeout: 5000 });
+await page.locator(".app > .guess-list .guess .hint-badge").first().waitFor({ timeout: 5000 });
 check(
   "hint reveals a 💡-badged word",
-  (await page.locator(".guess").count()) === guessCountBefore + 1,
+  (await page.locator(".app > .guess-list .guess").count()) === guessCountBefore + 1,
 );
 
 // 11. hint again: the new hint should be closer than the previous best
-const ranksBefore = await page.$$eval(".guess .rank", (els) =>
+const ranksBefore = await page.$$eval(".app > .guess-list .guess .rank", (els) =>
   els.map((e) => parseInt(e.textContent.replace(/[^0-9]/g, ""), 10)),
 );
 const bestBefore = Math.min(...ranksBefore);
 await page.locator(".guess-form button", { hasText: "hint" }).click();
 await page.waitForTimeout(300);
-const ranksAfter = await page.$$eval(".guess .rank", (els) =>
+const ranksAfter = await page.$$eval(".app > .guess-list .guess .rank", (els) =>
   els.map((e) => parseInt(e.textContent.replace(/[^0-9]/g, ""), 10)),
 );
 const bestAfter = Math.min(...ranksAfter);

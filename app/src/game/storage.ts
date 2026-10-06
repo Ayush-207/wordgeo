@@ -102,3 +102,22 @@ export function saveActivePractice(id: number | null): void {
     // ignore
   }
 }
+
+/** Whether the how-to-play box has been dismissed, so it only auto-opens once. */
+const SEEN_HOW_TO_PLAY_KEY = "wordgeo:seen-how-to-play";
+
+export function loadSeenHowToPlay(): boolean {
+  try {
+    return localStorage.getItem(SEEN_HOW_TO_PLAY_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveSeenHowToPlay(): void {
+  try {
+    localStorage.setItem(SEEN_HOW_TO_PLAY_KEY, "1");
+  } catch {
+    // ignore
+  }
+}
