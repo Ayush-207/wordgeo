@@ -25,10 +25,20 @@ Rankings are computed offline and shipped as static files. The browser never run
   | WS-353 relatedness | 0.573 | 0.694 | **0.754** |
   | SimLex-999 (strict similarity) | 0.373 | **0.658** | 0.599 |
 
-  Reproduce with `scripts/benchmark.py`.
+  Reproduce with `scripts/benchmark.py`. See [Why an ensemble](#why-an-ensemble) below.
 - **Vocabulary:** 39,210 words, which are all the plain lowercase words in the Model2Vec tokenizer
 - **Puzzles:** 200 curated secret words (`scripts/secrets.txt`). For each one, the build scores the whole vocabulary with the ensemble, sorts it, and writes one rank table.
 - **Daily id:** `days since LAUNCH_DATE % 200` (`app/src/game/modes.ts`)
+
+### Why an ensemble
+
+**The two models make different mistakes.** GloVe learns from news co-occurrence (`bush` → clinton, obama), while Model2Vec inherits its teacher's cultural associations (`banana` → reggae, blouse). On 50,000 random, unrelated word pairs, their scores correlate only 0.28. Averaging two equally noisy scores with that correlation keeps the shared signal and leaves √((1 + 0.28) / 2) ≈ 0.80 of the noise.
+
+**The game rewards relatedness, not strict similarity.** SimLex-999 scores *dog–cat* 1.8/10 and *wife–husband* 2.3/10, because they're related but not the same kind of thing. A game scored that way would call `cat` cold for the secret `dog`. Players navigate by association, which MEN and WS-353 relatedness measure, and that's where the ensemble wins. It loses on SimLex because GloVe is much weaker at strict similarity (0.37 vs 0.66) and dilutes Model2Vec. For a synonym game, Model2Vec alone would be the right choice.
+
+**Why z-score before averaging.** The models' cosines have different spreads on unrelated pairs (GloVe ±0.087, Model2Vec ±0.070), so averaging raw cosines would give the wider-spread model more say. Converting each cosine to "noise-widths above chance" gives each model an equal vote. Here the correction is modest (on average 94 of the top 100 words are unchanged), but it keeps the ensemble sound if a model with a very different scale is swapped in.
+
+**Caveat:** the ensemble was chosen after seeing these benchmarks, so they flatter it slightly. Its gain holds on two separate relatedness datasets.
 
 ### Puzzle file format
 
