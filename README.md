@@ -4,7 +4,7 @@ A Contexto-style word-guessing game built on semantic similarity.
 
 **Play:** https://ayush-207.github.io/wordgeo/
 
-<img src="docs/screenshot.png" alt="A solved wordgeo puzzle: guesses ranked from #1,991 (plate) down to #1 (the answer)" width="600">
+<img src="docs/screenshot.png" alt="The wordgeo how-to-play box: guesses get a rank, #1 is the secret word, with an example where the word is pizza (cheese #17, kitchen #68, italy #196, car #1,823)" width="480">
 
 There's a secret word. Every guess gets a **rank**: 1 is the secret word itself, and 500 means your guess is the 500th-closest word to it in the vocabulary. Lower is warmer. Use your best guesses to work your way toward the answer.
 
