@@ -72,6 +72,8 @@ await input.fill(secret);
 await page.locator(".guess-form button", { hasText: "guess" }).click();
 await page.locator(".solved").waitFor({ timeout: 5000 });
 check("solved panel appears", true);
+const solvedHeading = (await page.textContent(".solved h2")).trim();
+check("solved heading names the word", solvedHeading === `solved! the word was ${secret}`, solvedHeading);
 check(
   "solved guess count includes final guess",
   (await page.textContent(".solved p")).includes("guess"),

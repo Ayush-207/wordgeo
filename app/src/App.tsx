@@ -67,7 +67,10 @@ export default function App() {
         <>
           {game.state.solved ? (
             <section className="solved">
-              <h2>solved! the word was #{1}</h2>
+              <h2>
+                solved! the word was{" "}
+                {game.state.guesses.find((g) => g.rank === 1)?.word}
+              </h2>
               <p>
                 {game.state.guesses.length} guess
                 {game.state.guesses.length === 1 ? "" : "es"}
